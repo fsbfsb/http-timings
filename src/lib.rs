@@ -23,7 +23,7 @@
 //! match from_string(url, timeout) {
 //!     Ok(response) => {
 //!         println!("Response Status: {}", response.status);
-//!         println!("Response Body: {}", response.body);
+//!         println!("Response Body: {}", response.body_string());
 //!         if let Some(cert_info) = response.certificate_information {
 //!             println!("Certificate Subject: {:?}", cert_info.subject);
 //!             println!("Certificate Issued At: {:?}", cert_info.issued_at);
@@ -217,7 +217,13 @@ pub struct Response {
     /// The status of the response
     pub status: u16,
     /// The body of the response
-    pub body: String,
+    pub body: Vec<u8>,
+}
+
+impl Response {
+    fn body_string(&self) -> String {
+        String::from_utf8_lossy(&self.body).into_owned()
+    }
 }
 
 fn asn1_time_to_system_time(time: &Asn1TimeRef) -> Result<SystemTime, ErrorStack> {
@@ -362,7 +368,7 @@ fn get_ttfb_timing(
 
 fn get_content_download_timing(
     stream: &mut Box<dyn ReadWrite + Send + Sync>,
-) -> Result<(Duration, u16, String), error::Error> {
+) -> Result<(Duration, u16, Vec<u8>), error::Error> {
     let mut reader = BufReader::new(stream);
     let mut header_buf = String::new();
     let now = std::time::Instant::now();
@@ -434,15 +440,15 @@ fn get_content_download_timing(
             let mut decode_reader = BufReader::new(decoder);
             let mut buf = vec![];
             let _ = decode_reader.read_to_end(&mut buf);
-            String::from_utf8_lossy(&buf).into_owned()
+            buf
         }
         "deflate" => {
             let mut decoder = DeflateDecoder::new(&body_buf[..]);
-            let mut string = String::new();
-            if let Err(err) = decoder.read_to_string(&mut string) {
+            let mut buf = vec![];
+            if let Err(err) = decoder.read_to_end(&mut buf) {
                 return Err(error::Error::Io(err));
             }
-            string
+            buf
         }
         "br" => {
             let mut decoder = brotli::Decompressor::new(&body_buf[..], 4096);
@@ -450,9 +456,9 @@ fn get_content_download_timing(
             if let Err(err) = decoder.read_to_end(&mut buf) {
                 return Err(error::Error::Io(err));
             }
-            String::from_utf8_lossy(&buf).into_owned()
+            buf
         }
-        _ => String::from_utf8_lossy(&body_buf).into_owned(),
+        _ => body_buf,
     };
 
     Ok((now.elapsed(), status, body))
@@ -537,7 +543,7 @@ mod tests {
         assert!(result.is_ok());
         let response = result.unwrap();
         assert_eq!(response.status, 200);
-        assert!(response.body.contains("Follow @neverssl"));
+        assert!(response.body_string().contains("Follow @neverssl"));
         assert!(response.timings.dns.total.as_secs() < 1);
         assert!(response.timings.content_download.total.as_secs() < 5);
     }
@@ -549,7 +555,7 @@ mod tests {
         assert!(result.is_ok());
         let response = result.unwrap();
         assert_eq!(response.status, 200);
-        assert!(response.body.contains("Google Search"));
+        assert!(response.body_string().contains("Google Search"));
         assert!(response.timings.dns.total.as_secs() < 1);
         assert!(response.timings.content_download.total.as_secs() < 5);
     }
