@@ -333,6 +333,24 @@ fn get_tls_timing(
     })
 }
 
+fn get_path_with_query_and_fragment(url: &Url) -> String {
+    let mut combined_string = String::from(url.path());
+
+    // Append the query string if it exists
+    if let Some(query) = url.query() {
+        combined_string.push('?');
+        combined_string.push_str(query);
+    }
+    
+    // Append the fragment if it exists
+    if let Some(fragment) = url.fragment() {
+        combined_string.push('#');
+        combined_string.push_str(fragment);
+    }
+
+    combined_string
+}
+
 fn get_http_send_timing(
     url: &Url,
     stream: &mut Box<dyn ReadWrite + Send + Sync>,
@@ -340,7 +358,7 @@ fn get_http_send_timing(
     let now = std::time::Instant::now();
     let request = format!(
         "GET {} HTTP/1.0\r\nHost: {}\r\nAccept-Encoding: gzip, deflate, br\r\nUser-Agent: http-timings/0.2\r\nConnection: keep-alive\r\nAccept: */*\r\n\r\n",
-        url.path(),
+        get_path_with_query_and_fragment(&url),
         match url.host_str() {
             Some(host) => host,
             None => return Err(error::Error::Io(std::io::Error::new(
