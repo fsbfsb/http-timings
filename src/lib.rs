@@ -358,16 +358,11 @@ fn get_http_send_timing(
     stream: &mut Box<dyn ReadWrite + Send + Sync>,
 ) -> Result<Duration, error::Error> {
     let now = std::time::Instant::now();
-    let url_path = url.path();
-    let url_query = url.query();
-    let url_string = format!(
-        "{url_path}{}",
-        if url_query.is_some() {
-            format!("?{}", url_query.unwrap())
-        } else {
-            "".to_string()
-        }
-    );
+    let url_string = match url.query() {
+        Some(query) => format!("{}?{query}", url.path()),
+        None => url.path().to_string(),
+    };
+    println!("url_string: {url_string}");
     let request = format!(
         "GET {} HTTP/1.0\r\nHost: {}\r\nAccept-Encoding: gzip, deflate, br\r\nUser-Agent: http-timings/{}\r\nConnection: keep-alive\r\nAccept: */*\r\n\r\n",
         url_string,
