@@ -19,7 +19,7 @@ let timeout = Some(Duration::from_secs(5)); // Set a timeout of 5 seconds
 match from_string(url, timeout) {
     Ok(response) => {
         println!("Response Status: {}", response.status);
-        println!("Response Body: {}", response.body);
+        println!("Response Body: {}", response.body.string());
         if let Some(cert_info) = response.certificate_information {
             println!("Certificate Subject: {:?}", cert_info.subject);
             println!("Certificate Issued At: {:?}", cert_info.issued_at);
