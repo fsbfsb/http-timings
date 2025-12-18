@@ -23,7 +23,7 @@
 //! match from_string(url, timeout) {
 //!     Ok(response) => {
 //!         println!("Response Status: {}", response.status);
-//!         println!("Response Body: {}", response.body);
+//!         println!("Response Body: {}", response.body.string());
 //!         if let Some(cert_info) = response.certificate_information {
 //!             println!("Certificate Subject: {:?}", cert_info.subject);
 //!             println!("Certificate Issued At: {:?}", cert_info.issued_at);
@@ -206,6 +206,32 @@ pub struct CertificateInformation {
 }
 
 #[derive(Debug)]
+/// A body of a response
+pub struct Body {
+    inner: Vec<u8>,
+}
+
+impl Body {
+    /// Returns the body as a string
+    #[must_use]
+    pub fn string(&self) -> String {
+        String::from_utf8_lossy(&self.inner).into_owned()
+    }
+
+    /// Returns the body as bytes
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.inner
+    }
+
+    /// Converts the body into a vector of bytes
+    #[must_use]
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.inner
+    }
+}
+
+#[derive(Debug)]
 /// The response from a given request
 pub struct Response {
     /// The timings of the response
@@ -217,7 +243,7 @@ pub struct Response {
     /// The status of the response
     pub status: u16,
     /// The body of the response
-    pub body: String,
+    pub body: Body,
 }
 
 fn asn1_time_to_system_time(time: &Asn1TimeRef) -> Result<SystemTime, ErrorStack> {
@@ -240,7 +266,7 @@ fn get_dns_timing(url: &Url) -> Result<(Duration, IntoIter<SocketAddr>), error::
             return Err(error::Error::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
                 "invalid url scheme",
-            )))
+            )));
         }
     });
     let start = std::time::Instant::now();
@@ -289,7 +315,7 @@ fn get_tls_timing(
                 return Err(error::Error::Io(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
                     "invalid url host",
-                )))
+                )));
             }
         },
         stream,
@@ -332,16 +358,22 @@ fn get_http_send_timing(
     stream: &mut Box<dyn ReadWrite + Send + Sync>,
 ) -> Result<Duration, error::Error> {
     let now = std::time::Instant::now();
+    let url_string = match url.query() {
+        Some(query) => format!("{}?{query}", url.path()),
+        None => url.path().to_string(),
+    };
     let request = format!(
-        "GET {} HTTP/1.0\r\nHost: {}\r\nAccept-Encoding: gzip, deflate, br\r\nUser-Agent: http-timings/0.2\r\nConnection: keep-alive\r\nAccept: */*\r\n\r\n",
-        url.path(),
+        "GET {} HTTP/1.0\r\nHost: {}\r\nAccept-Encoding: gzip, deflate, br\r\nUser-Agent: http-timings/{}\r\nConnection: keep-alive\r\nAccept: */*\r\n\r\n",
+        url_string,
         match url.host_str() {
             Some(host) => host,
-            None => return Err(error::Error::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "invalid url host",
-            ))),
-        }
+            None =>
+                return Err(error::Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "invalid url host",
+                ))),
+        },
+        env!("CARGO_PKG_VERSION"),
     );
     if let Err(err) = stream.write_all(request.as_bytes()) {
         return Err(error::Error::Io(err));
@@ -362,7 +394,7 @@ fn get_ttfb_timing(
 
 fn get_content_download_timing(
     stream: &mut Box<dyn ReadWrite + Send + Sync>,
-) -> Result<(Duration, u16, String), error::Error> {
+) -> Result<(Duration, u16, Body), error::Error> {
     let mut reader = BufReader::new(stream);
     let mut header_buf = String::new();
     let now = std::time::Instant::now();
@@ -402,7 +434,7 @@ fn get_content_download_timing(
             return Err(error::Error::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
                 "invalid http status",
-            )))
+            )));
         }
     };
 
@@ -434,15 +466,15 @@ fn get_content_download_timing(
             let mut decode_reader = BufReader::new(decoder);
             let mut buf = vec![];
             let _ = decode_reader.read_to_end(&mut buf);
-            String::from_utf8_lossy(&buf).into_owned()
+            Body { inner: buf }
         }
         "deflate" => {
             let mut decoder = DeflateDecoder::new(&body_buf[..]);
-            let mut string = String::new();
-            if let Err(err) = decoder.read_to_string(&mut string) {
+            let mut buf = vec![];
+            if let Err(err) = decoder.read_to_end(&mut buf) {
                 return Err(error::Error::Io(err));
             }
-            string
+            Body { inner: buf }
         }
         "br" => {
             let mut decoder = brotli::Decompressor::new(&body_buf[..], 4096);
@@ -450,9 +482,9 @@ fn get_content_download_timing(
             if let Err(err) = decoder.read_to_end(&mut buf) {
                 return Err(error::Error::Io(err));
             }
-            String::from_utf8_lossy(&buf).into_owned()
+            Body { inner: buf }
         }
-        _ => String::from_utf8_lossy(&body_buf).into_owned(),
+        _ => Body { inner: body_buf },
     };
 
     Ok((now.elapsed(), status, body))
@@ -532,12 +564,12 @@ mod tests {
 
     #[test]
     fn test_non_tls_connection() {
-        let url = "neverssl.com";
+        let url = "httpforever.com";
         let result = from_string(url, Some(TIMEOUT));
         assert!(result.is_ok());
         let response = result.unwrap();
         assert_eq!(response.status, 200);
-        assert!(response.body.contains("Follow @neverssl"));
+        assert!(response.body.string().contains("scotthelme.co.uk"));
         assert!(response.timings.dns.total.as_secs() < 1);
         assert!(response.timings.content_download.total.as_secs() < 5);
     }
@@ -549,7 +581,7 @@ mod tests {
         assert!(result.is_ok());
         let response = result.unwrap();
         assert_eq!(response.status, 200);
-        assert!(response.body.contains("Google Search"));
+        assert!(response.body.string().contains("Google Search"));
         assert!(response.timings.dns.total.as_secs() < 1);
         assert!(response.timings.content_download.total.as_secs() < 5);
     }
@@ -561,7 +593,19 @@ mod tests {
         assert!(result.is_ok());
         let response = result.unwrap();
         assert_eq!(response.status, 301);
-        assert!(!response.body.is_empty());
+        assert!(!response.body.bytes().is_empty());
+        assert!(response.timings.dns.total.as_secs() < 1);
+        assert!(response.timings.content_download.total.as_secs() < 5);
+    }
+
+    #[test]
+    fn test_url_with_query() {
+        let url = "https://shouldideploy.today/api?tz=UTC&lang=en";
+        let result = from_string(url, Some(TIMEOUT));
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert_eq!(response.status, 200);
+        assert!(response.body.string().contains("shouldideploy"));
         assert!(response.timings.dns.total.as_secs() < 1);
         assert!(response.timings.content_download.total.as_secs() < 5);
     }
