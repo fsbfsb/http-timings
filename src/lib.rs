@@ -362,7 +362,6 @@ fn get_http_send_timing(
         Some(query) => format!("{}?{query}", url.path()),
         None => url.path().to_string(),
     };
-    println!("url_string: {url_string}");
     let request = format!(
         "GET {} HTTP/1.0\r\nHost: {}\r\nAccept-Encoding: gzip, deflate, br\r\nUser-Agent: http-timings/{}\r\nConnection: keep-alive\r\nAccept: */*\r\n\r\n",
         url_string,
